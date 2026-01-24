@@ -21,8 +21,20 @@ import os from "os";
 // Load environment variables
 dotenvConfig();
 
+// Available Gemini image generation models
+const AVAILABLE_MODELS = {
+  "gemini-3-pro-image-preview": "Gemini 3 Pro Image - Highest quality, advanced reasoning (Nano Banana Pro)",
+  "gemini-2.5-flash-image": "Gemini 2.5 Flash Image - Fast, high-volume generation (Nano Banana)",
+} as const;
+
+type AvailableModel = keyof typeof AVAILABLE_MODELS;
+
+// Default model - can be overridden via GEMINI_MODEL env var or config file
+const DEFAULT_MODEL: AvailableModel = "gemini-3-pro-image-preview";
+
 const ConfigSchema = z.object({
   geminiApiKey: z.string().min(1, "Gemini API key is required"),
+  model: z.string().optional(),
 });
 
 type Config = z.infer<typeof ConfigSchema>;
@@ -33,6 +45,7 @@ class NanoBananaMCP {
   private config: Config | null = null;
   private lastImagePath: string | null = null;
   private configSource: 'environment' | 'config_file' | 'not_configured' = 'not_configured';
+  private model: string = DEFAULT_MODEL;
 
   constructor() {
     this.server = new Server(
@@ -78,6 +91,20 @@ class NanoBananaMCP {
                   type: "string",
                   description: "Text prompt describing the NEW image to create from scratch",
                 },
+                aspectRatio: {
+                  type: "string",
+                  description: "Image aspect ratio. Options: '1:1' (square, default), '16:9' (widescreen/landscape/desktop/YouTube thumbnail), '9:16' (portrait/mobile/vertical/TikTok/Instagram Reels/Stories), '4:3' (standard landscape), '3:4' (standard portrait), '3:2' (classic photo landscape), '2:3' (classic photo portrait), '4:5' (Instagram portrait), '5:4' (Instagram landscape), '21:9' (ultrawide/cinematic)",
+                  enum: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+                },
+                resolution: {
+                  type: "string",
+                  description: "Image resolution/quality. Options: '1K' (1024px, default, fast), '2K' (2048px, high quality), '4K' (4096px, ultra high quality, best for print/professional use). Higher resolution = slower generation. 4K only available with gemini-3-pro-image-preview model.",
+                  enum: ["1K", "2K", "4K"],
+                },
+                useGoogleSearch: {
+                  type: "boolean",
+                  description: "Enable Google Search grounding for real-world accuracy. Use this when the prompt references current events, real people, real places, brands, or factual information that benefits from web search context. Default: false",
+                },
               },
               required: ["prompt"],
             },
@@ -102,6 +129,20 @@ class NanoBananaMCP {
                     type: "string"
                   },
                   description: "Optional array of file paths to additional reference images to use during editing (e.g., for style transfer, adding elements, etc.)",
+                },
+                aspectRatio: {
+                  type: "string",
+                  description: "Output image aspect ratio. Options: '1:1' (square, default), '16:9' (widescreen/landscape/desktop/YouTube thumbnail), '9:16' (portrait/mobile/vertical/TikTok/Instagram Reels/Stories), '4:3' (standard landscape), '3:4' (standard portrait), '3:2' (classic photo landscape), '2:3' (classic photo portrait), '4:5' (Instagram portrait), '5:4' (Instagram landscape), '21:9' (ultrawide/cinematic)",
+                  enum: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+                },
+                resolution: {
+                  type: "string",
+                  description: "Output image resolution/quality. Options: '1K' (1024px, default, fast), '2K' (2048px, high quality), '4K' (4096px, ultra high quality, best for print/professional use). Higher resolution = slower generation. 4K only available with gemini-3-pro-image-preview model.",
+                  enum: ["1K", "2K", "4K"],
+                },
+                useGoogleSearch: {
+                  type: "boolean",
+                  description: "Enable Google Search grounding for real-world accuracy. Use this when the edit references current events, real people, real places, brands, or factual information. Default: false",
                 },
               },
               required: ["imagePath", "prompt"],
@@ -133,6 +174,20 @@ class NanoBananaMCP {
                   },
                   description: "Optional array of file paths to additional reference images to use during editing (e.g., for style transfer, adding elements from other images, etc.)",
                 },
+                aspectRatio: {
+                  type: "string",
+                  description: "Output image aspect ratio. Options: '1:1' (square, default), '16:9' (widescreen/landscape/desktop/YouTube thumbnail), '9:16' (portrait/mobile/vertical/TikTok/Instagram Reels/Stories), '4:3' (standard landscape), '3:4' (standard portrait), '3:2' (classic photo landscape), '2:3' (classic photo portrait), '4:5' (Instagram portrait), '5:4' (Instagram landscape), '21:9' (ultrawide/cinematic)",
+                  enum: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+                },
+                resolution: {
+                  type: "string",
+                  description: "Output image resolution/quality. Options: '1K' (1024px, default, fast), '2K' (2048px, high quality), '4K' (4096px, ultra high quality, best for print/professional use). Higher resolution = slower generation. 4K only available with gemini-3-pro-image-preview model.",
+                  enum: ["1K", "2K", "4K"],
+                },
+                useGoogleSearch: {
+                  type: "boolean",
+                  description: "Enable Google Search grounding for real-world accuracy. Use this when the edit references current events, real people, real places, brands, or factual information. Default: false",
+                },
               },
               required: ["prompt"],
             },
@@ -144,6 +199,30 @@ class NanoBananaMCP {
               type: "object",
               properties: {},
               additionalProperties: false,
+            },
+          },
+          {
+            name: "get_available_models",
+            description: "List all available Gemini image generation models and show which one is currently active.",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+          {
+            name: "set_model",
+            description: "Switch to a different Gemini image generation model. Use this when the user asks to change models or wants faster/higher quality generation.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                model: {
+                  type: "string",
+                  description: "The model slug to use. Options: 'gemini-3-pro-image-preview' (highest quality, default) or 'gemini-2.5-flash-image' (faster)",
+                  enum: Object.keys(AVAILABLE_MODELS),
+                },
+              },
+              required: ["model"],
             },
           },
         ] as Tool[],
@@ -170,7 +249,13 @@ class NanoBananaMCP {
           
           case "get_last_image_info":
             return await this.getLastImageInfo();
-          
+
+          case "get_available_models":
+            return await this.getAvailableModels();
+
+          case "set_model":
+            return await this.setModel(request);
+
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
         }
@@ -216,12 +301,39 @@ class NanoBananaMCP {
       throw new McpError(ErrorCode.InvalidRequest, "Gemini API token not configured. Use configure_gemini_token first.");
     }
 
-    const { prompt } = request.params.arguments as { prompt: string };
-    
+    const { prompt, aspectRatio, resolution, useGoogleSearch } = request.params.arguments as {
+      prompt: string;
+      aspectRatio?: string;
+      resolution?: string;
+      useGoogleSearch?: boolean;
+    };
+
     try {
+      // Build config object
+      const config: any = {
+        responseModalities: ['TEXT', 'IMAGE'],
+      };
+
+      // Add image config if aspectRatio or resolution specified
+      if (aspectRatio || resolution) {
+        config.imageConfig = {};
+        if (aspectRatio) {
+          config.imageConfig.aspectRatio = aspectRatio;
+        }
+        if (resolution) {
+          config.imageConfig.imageSize = resolution;
+        }
+      }
+
+      // Add Google Search grounding if requested
+      if (useGoogleSearch) {
+        config.tools = [{ googleSearch: {} }];
+      }
+
       const response = await this.genAI!.models.generateContent({
-        model: "gemini-2.5-flash-image-preview",
+        model: this.model,
         contents: prompt,
+        config: config,
       });
       
       // Process response to extract image data
@@ -265,7 +377,11 @@ class NanoBananaMCP {
       }
       
       // Build response content
-      let statusText = `🎨 Image generated with nano-banana (Gemini 2.5 Flash Image)!\n\nPrompt: "${prompt}"`;
+      let statusText = `Image generated with nano-banana!\n\nModel: ${this.model}`;
+      if (aspectRatio) statusText += `\nAspect Ratio: ${aspectRatio}`;
+      if (resolution) statusText += `\nResolution: ${resolution}`;
+      if (useGoogleSearch) statusText += `\nGoogle Search: enabled`;
+      statusText += `\nPrompt: "${prompt}"`;
       
       if (textContent) {
         statusText += `\n\nDescription: ${textContent}`;
@@ -305,10 +421,13 @@ class NanoBananaMCP {
       throw new McpError(ErrorCode.InvalidRequest, "Gemini API token not configured. Use configure_gemini_token first.");
     }
 
-    const { imagePath, prompt, referenceImages } = request.params.arguments as { 
-      imagePath: string; 
-      prompt: string; 
+    const { imagePath, prompt, referenceImages, aspectRatio, resolution, useGoogleSearch } = request.params.arguments as {
+      imagePath: string;
+      prompt: string;
       referenceImages?: string[];
+      aspectRatio?: string;
+      resolution?: string;
+      useGoogleSearch?: boolean;
     };
     
     try {
@@ -350,15 +469,37 @@ class NanoBananaMCP {
       
       // Add the text prompt
       imageParts.push({ text: prompt });
-      
+
+      // Build config object
+      const config: any = {
+        responseModalities: ['TEXT', 'IMAGE'],
+      };
+
+      // Add image config if aspectRatio or resolution specified
+      if (aspectRatio || resolution) {
+        config.imageConfig = {};
+        if (aspectRatio) {
+          config.imageConfig.aspectRatio = aspectRatio;
+        }
+        if (resolution) {
+          config.imageConfig.imageSize = resolution;
+        }
+      }
+
+      // Add Google Search grounding if requested
+      if (useGoogleSearch) {
+        config.tools = [{ googleSearch: {} }];
+      }
+
       // Use new API format with multiple images and text
       const response = await this.genAI!.models.generateContent({
-        model: "gemini-2.5-flash-image-preview",
+        model: this.model,
         contents: [
           {
             parts: imageParts
           }
         ],
+        config: config,
       });
       
       // Process response
@@ -404,7 +545,11 @@ class NanoBananaMCP {
       }
       
       // Build response
-      let statusText = `🎨 Image edited with nano-banana!\n\nOriginal: ${imagePath}\nEdit prompt: "${prompt}"`;
+      let statusText = `Image edited with nano-banana!\n\nModel: ${this.model}`;
+      if (aspectRatio) statusText += `\nAspect Ratio: ${aspectRatio}`;
+      if (resolution) statusText += `\nResolution: ${resolution}`;
+      if (useGoogleSearch) statusText += `\nGoogle Search: enabled`;
+      statusText += `\nOriginal: ${imagePath}\nEdit prompt: "${prompt}"`;
       
       if (referenceImages && referenceImages.length > 0) {
         statusText += `\n\nReference images used:\n${referenceImages.map(f => `- ${f}`).join('\n')}`;
@@ -443,34 +588,38 @@ class NanoBananaMCP {
 
   private async getConfigurationStatus(): Promise<CallToolResult> {
     const isConfigured = this.config !== null && this.genAI !== null;
-    
+
     let statusText: string;
     let sourceInfo = "";
-    
+
     if (isConfigured) {
-      statusText = "✅ Gemini API token is configured and ready to use";
-      
+      statusText = "Gemini API token is configured and ready to use";
+      statusText += `\n\nCurrent Model: ${this.model}`;
+      if (AVAILABLE_MODELS[this.model as AvailableModel]) {
+        statusText += `\n  ${AVAILABLE_MODELS[this.model as AvailableModel]}`;
+      }
+
       switch (this.configSource) {
         case 'environment':
-          sourceInfo = "\n📍 Source: Environment variable (GEMINI_API_KEY)\n💡 This is the most secure configuration method.";
+          sourceInfo = "\n\nSource: Environment variable (GEMINI_API_KEY)\nThis is the most secure configuration method.";
           break;
         case 'config_file':
-          sourceInfo = "\n📍 Source: Local configuration file (.nano-banana-config.json)\n💡 Consider using environment variables for better security.";
+          sourceInfo = "\n\nSource: Local configuration file (.nano-banana-config.json)\nConsider using environment variables for better security.";
           break;
       }
     } else {
-      statusText = "❌ Gemini API token is not configured";
+      statusText = "Gemini API token is not configured";
       sourceInfo = `
 
-📝 Configuration options (in priority order):
-1. 🥇 MCP client environment variables (Recommended)
-2. 🥈 System environment variable: GEMINI_API_KEY  
-3. 🥉 Use configure_gemini_token tool
+Configuration options (in priority order):
+1. MCP client environment variables (Recommended)
+2. System environment variable: GEMINI_API_KEY
+3. Use configure_gemini_token tool
 
-💡 For the most secure setup, add this to your MCP configuration:
-"env": { "GEMINI_API_KEY": "your-api-key-here" }`;
+For the most secure setup, add this to your MCP configuration:
+"env": { "GEMINI_API_KEY": "your-api-key-here", "GEMINI_MODEL": "gemini-3-pro-image-preview" }`;
     }
-    
+
     return {
       content: [
         {
@@ -490,20 +639,22 @@ class NanoBananaMCP {
       throw new McpError(ErrorCode.InvalidRequest, "No previous image found. Please generate or edit an image first, then use continue_editing for subsequent edits.");
     }
 
-    const { prompt, referenceImages } = request.params.arguments as { 
-      prompt: string; 
+    const { prompt, referenceImages, aspectRatio, resolution, useGoogleSearch } = request.params.arguments as {
+      prompt: string;
       referenceImages?: string[];
+      aspectRatio?: string;
+      resolution?: string;
+      useGoogleSearch?: boolean;
     };
 
-    // 检查最后的图片文件是否存在
+    // Check if last image file exists
     try {
       await fs.access(this.lastImagePath);
     } catch {
       throw new McpError(ErrorCode.InvalidRequest, `Last image file not found at: ${this.lastImagePath}. Please generate a new image first.`);
     }
 
-    // Use editImage logic with lastImagePath
-    
+    // Use editImage logic with lastImagePath and pass through all parameters
     return await this.editImage({
       method: "tools/call",
       params: {
@@ -511,7 +662,10 @@ class NanoBananaMCP {
         arguments: {
           imagePath: this.lastImagePath,
           prompt: prompt,
-          referenceImages: referenceImages
+          referenceImages: referenceImages,
+          aspectRatio: aspectRatio,
+          resolution: resolution,
+          useGoogleSearch: useGoogleSearch
         }
       }
     } as CallToolRequest);
@@ -552,6 +706,51 @@ class NanoBananaMCP {
         ],
       };
     }
+  }
+
+  private async getAvailableModels(): Promise<CallToolResult> {
+    const modelList = Object.entries(AVAILABLE_MODELS)
+      .map(([id, description]) => {
+        const isActive = id === this.model;
+        return `${isActive ? "[ACTIVE] " : ""}${id}\n  ${description}`;
+      })
+      .join("\n\n");
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Available Gemini Image Generation Models:\n\n${modelList}\n\nTo change the model:\n- Use the set_model tool to switch models during this session\n- Or set GEMINI_MODEL environment variable in your MCP config`,
+        },
+      ],
+    };
+  }
+
+  private async setModel(request: CallToolRequest): Promise<CallToolResult> {
+    const { model } = request.params.arguments as { model: string };
+
+    // Validate model
+    if (!Object.keys(AVAILABLE_MODELS).includes(model)) {
+      const availableModels = Object.keys(AVAILABLE_MODELS).join(", ");
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Invalid model: "${model}". Available models: ${availableModels}`
+      );
+    }
+
+    const previousModel = this.model;
+    this.model = model;
+
+    const modelDescription = AVAILABLE_MODELS[model as AvailableModel];
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Model switched successfully!\n\nPrevious: ${previousModel}\nCurrent: ${model}\n\n${modelDescription}`,
+        },
+      ],
+    };
   }
 
   private ensureConfigured(): boolean {
@@ -602,11 +801,17 @@ class NanoBananaMCP {
   }
 
   private async loadConfig(): Promise<void> {
+    // Load model from environment variable (takes priority)
+    const envModel = process.env.GEMINI_MODEL;
+    if (envModel) {
+      this.model = envModel;
+    }
+
     // Try to load from environment variable first
     const envApiKey = process.env.GEMINI_API_KEY;
     if (envApiKey) {
       try {
-        this.config = ConfigSchema.parse({ geminiApiKey: envApiKey });
+        this.config = ConfigSchema.parse({ geminiApiKey: envApiKey, model: envModel });
         this.genAI = new GoogleGenAI({ apiKey: this.config.geminiApiKey });
         this.configSource = 'environment';
         return;
@@ -614,16 +819,21 @@ class NanoBananaMCP {
         // Invalid API key in environment
       }
     }
-    
+
     // Fallback to config file
     try {
       const configPath = path.join(process.cwd(), '.nano-banana-config.json');
       const configData = await fs.readFile(configPath, 'utf-8');
       const parsedConfig = JSON.parse(configData);
-      
+
       this.config = ConfigSchema.parse(parsedConfig);
       this.genAI = new GoogleGenAI({ apiKey: this.config.geminiApiKey });
       this.configSource = 'config_file';
+
+      // Use model from config file if not set via env var
+      if (!envModel && this.config.model) {
+        this.model = this.config.model;
+      }
     } catch {
       // Config file doesn't exist or is invalid, that's okay
       this.configSource = 'not_configured';
