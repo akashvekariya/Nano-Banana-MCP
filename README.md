@@ -1,5 +1,10 @@
 # Nano-Banana MCP Server 🍌
 
+[![npm version](https://img.shields.io/npm/v/@akashvekariya/nano-banana-mcp.svg)](https://www.npmjs.com/package/@akashvekariya/nano-banana-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/@akashvekariya/nano-banana-mcp.svg)](https://www.npmjs.com/package/@akashvekariya/nano-banana-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
+
 > **🤖 This project was forked from [ConechoAI/Nano-Banana-MCP](https://github.com/ConechoAI/Nano-Banana-MCP)** and enhanced with configurable model support.
 
 A Model Context Protocol (MCP) server that provides AI image generation and editing capabilities using Google's Gemini Image API. Generate stunning images, edit existing ones, and iterate on your creations with simple text prompts.
